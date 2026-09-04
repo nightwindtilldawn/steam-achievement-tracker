@@ -5,7 +5,7 @@
  *
  * What this file guards is **one vendor's settings being used as another's**.
  *
- * `ai` used to hold a single `apiKey` / `model` / `baseUrl` while there are three vendors.
+ * `ai` used to hold a single `apiKey` / `model` / `baseUrl` while there are two vendors.
  * So "try another one", the most ordinary action there is, had no safe form:
  *
  *  - the settings page made you paste the key again every time (it at least **refuses** to
@@ -22,8 +22,8 @@
  * Which fields go into `ai.providers` was measured rather than chosen: **read by more than
  * one vendor, with a different correct value for each** applies only to `apiKey` / `model` /
  * `baseUrl`. `maxTokens` and `effort` are cross-vendor budgets (the same value is right
- * anywhere); `geminiTools`, `webFetch` and `searchTool` are read by exactly one vendor, so
- * the previous vendor's value is ignored rather than misused.
+ * anywhere); `webFetch` and `searchTool` are read by exactly one vendor, so the previous
+ * vendor's value is ignored rather than misused.
  *
  * Three rules:
  *
@@ -59,12 +59,9 @@ const env = (o = {}) => ({ ...o });
 // ---------------------------------------------------------------------------
 
 describe('canonicalAiProvider', () => {
-  test('aliases converge on one vendor — one set per vendor, not per endpoint', () => {
-    // google is an alias for gemini (createProvider agrees); deepseek-openai is the same
-    // vendor's other endpoint with **the same key**, and splitting them into two sets would
-    // only make people paste it twice
-    assert.equal(canonicalAiProvider('google'), 'gemini');
-    assert.equal(canonicalAiProvider('GEMINI'), 'gemini');
+  test('an alias converges on the vendor it names — one set per vendor, not per endpoint', () => {
+    // deepseek-openai is the same vendor's other endpoint with **the same key**, and splitting
+    // them into two sets would only make people paste it twice
     assert.equal(canonicalAiProvider('deepseek-openai'), 'deepseek');
     assert.equal(canonicalAiProvider('Anthropic'), 'anthropic');
   });
@@ -99,11 +96,10 @@ describe('resolveAiKey', () => {
 
   test('one set per vendor, with no overwriting', () => {
     const ai = {
-      provider: 'gemini',
-      providers: { anthropic: { apiKey: 'ANT' }, gemini: { apiKey: 'GEM' }, deepseek: { apiKey: 'DS' } },
+      provider: 'deepseek',
+      providers: { anthropic: { apiKey: 'ANT' }, deepseek: { apiKey: 'DS' } },
     };
     assert.equal(resolveAiKey(ai, 'anthropic', env()), 'ANT');
-    assert.equal(resolveAiKey(ai, 'gemini', env()), 'GEM');
     assert.equal(resolveAiKey(ai, 'deepseek', env()), 'DS');
     assert.equal(resolveAiKey(ai, 'deepseek-openai', env()), 'DS', 'the same vendor\'s other endpoint shares one key');
   });
@@ -131,9 +127,9 @@ describe('resolveAiKey', () => {
     // A newline picked up while copy-pasting is the most common cause of a 401, and the
     // reported error points nowhere near it.
     // All three sources have to strip; missing one makes this protection hold only for some forms
-    assert.equal(resolveAiKey({ providers: { gemini: { apiKey: '  G  ' } } }, 'gemini', env()), 'G');
-    assert.equal(resolveAiKey({ provider: 'gemini', apiKey: '\tG\n' }, 'gemini', env()), 'G');
-    assert.equal(resolveAiKey({}, 'gemini', env({ GEMINI_API_KEY: ' G ' })), 'G');
+    assert.equal(resolveAiKey({ providers: { anthropic: { apiKey: '  A  ' } } }, 'anthropic', env()), 'A');
+    assert.equal(resolveAiKey({ provider: 'anthropic', apiKey: '\tA\n' }, 'anthropic', env()), 'A');
+    assert.equal(resolveAiKey({}, 'anthropic', env({ ANTHROPIC_API_KEY: ' A ' })), 'A');
   });
 
   test('nothing anywhere is an empty string, not undefined', () => {
@@ -152,7 +148,6 @@ describe('switchAiProvider', () => {
     provider: 'deepseek',
     providers: {
       anthropic: { apiKey: 'ANT', model: 'claude-opus-5' },
-      gemini: { apiKey: 'GEM', model: 'gemini-flash-latest' },
       deepseek: { apiKey: 'DS', model: 'deepseek-v4-flash', baseUrl: 'https://api.deepseek.com/anthropic' },
     },
   };
@@ -161,16 +156,16 @@ describe('switchAiProvider', () => {
     // This is the entire reason model went into providers. With one `model`, switching vendor
     // could only clear it (carrying the previous vendor's model name across necessarily trips
     // assertModelMatchesProvider), so "the version I pinned for Anthropic" was gone after
-    // switching to Gemini and back — with no error, quietly reverting to the default
+    // switching to DeepSeek and back — with no error, quietly reverting to the default
     const a = switchAiProvider(AI, 'anthropic', env());
     assert.equal(a.apiKey, 'ANT');
     assert.equal(a.model, 'claude-opus-5');
 
-    const g = switchAiProvider(a, 'gemini', env());
-    assert.equal(g.apiKey, 'GEM');
-    assert.equal(g.model, 'gemini-flash-latest');
+    const d = switchAiProvider(a, 'deepseek', env());
+    assert.equal(d.apiKey, 'DS');
+    assert.equal(d.model, 'deepseek-v4-flash');
 
-    assert.equal(switchAiProvider(g, 'anthropic', env()).model, 'claude-opus-5', 'switching back should find it exactly as it was');
+    assert.equal(switchAiProvider(d, 'anthropic', env()).model, 'claude-opus-5', 'switching back should find it exactly as it was');
   });
 
   test('baseUrl travels with it too — it is likewise one value per vendor', () => {
@@ -187,7 +182,7 @@ describe('switchAiProvider', () => {
 
   test('switching to a vendor with nothing configured leaves all three fields empty — nothing from the previous one', () => {
     const ai = { provider: 'deepseek', apiKey: 'DS', model: 'deepseek-v4-flash', providers: {} };
-    const next = switchAiProvider(ai, 'gemini', env());
+    const next = switchAiProvider(ai, 'anthropic', env());
     assert.equal(next.apiKey, '');
     assert.equal(next.model, '');
     assert.equal(next.baseUrl, '');
@@ -202,7 +197,7 @@ describe('switchAiProvider', () => {
   });
 
   test('the cross-vendor budget knobs are carried across verbatim — they are not one value per vendor', () => {
-    const ai = { provider: 'gemini', providers: {}, maxTokens: 12345, effort: 'low', chunkSize: 20 };
+    const ai = { provider: 'deepseek', providers: {}, maxTokens: 12345, effort: 'low', chunkSize: 20 };
     const next = switchAiProvider(ai, 'anthropic', env());
     assert.equal(next.maxTokens, 12345);
     assert.equal(next.effort, 'low');
@@ -217,12 +212,12 @@ describe('switchAiProvider', () => {
 describe('loadConfig', () => {
   test('the current vendor\'s three fields are flattened onto ai, so downstream needs not one word changed', () => {
     writeConfig({
-      provider: 'gemini',
-      providers: { anthropic: { apiKey: 'ANT', model: 'claude-opus-5' }, gemini: { apiKey: 'GEM', model: 'gemini-3-pro' } },
+      provider: 'deepseek',
+      providers: { anthropic: { apiKey: 'ANT', model: 'claude-opus-5' }, deepseek: { apiKey: 'DS', model: 'deepseek-v4-flash' } },
     });
     const { ai } = loadConfig();
-    assert.equal(ai.apiKey, 'GEM');
-    assert.equal(ai.model, 'gemini-3-pro');
+    assert.equal(ai.apiKey, 'DS');
+    assert.equal(ai.model, 'deepseek-v4-flash');
   });
 
   test('an old config with only the legacy flat fields still works', () => {
@@ -270,25 +265,25 @@ describe('loadConfig', () => {
   });
 
   test('AI_MODEL outranks the stored model — it is the "which one this time" temporary override', () => {
-    writeConfig({ provider: 'gemini', providers: { gemini: { apiKey: 'GEM', model: 'gemini-flash-latest' } } });
-    process.env.AI_MODEL = 'gemini-3-pro';
+    writeConfig({ provider: 'deepseek', providers: { deepseek: { apiKey: 'DS', model: 'deepseek-v4-flash' } } });
+    process.env.AI_MODEL = 'deepseek-reasoner';
     try {
-      assert.equal(loadConfig().ai.model, 'gemini-3-pro');
+      assert.equal(loadConfig().ai.model, 'deepseek-reasoner');
     } finally {
       delete process.env.AI_MODEL;
     }
   });
 
   test('ai.providers stays in the config verbatim — the settings page relies on it to know which vendors are configured', () => {
-    writeConfig({ provider: 'gemini', providers: { anthropic: { apiKey: 'ANT' }, gemini: { apiKey: 'GEM' } } });
-    assert.deepEqual(Object.keys(loadConfig().ai.providers).sort(), ['anthropic', 'gemini']);
+    writeConfig({ provider: 'deepseek', providers: { anthropic: { apiKey: 'ANT' }, deepseek: { apiKey: 'DS' } } });
+    assert.deepEqual(Object.keys(loadConfig().ai.providers).sort(), ['anthropic', 'deepseek']);
   });
 
   /**
    * **Saving one vendor must not erase another.**
    *
    * This is the one direction in this change set that **loses data silently**: if the settings
-   * page writes the whole `providers` back when saving Gemini, Anthropic's set is gone while
+   * page writes the whole `providers` back when saving DeepSeek, Anthropic's set is gone while
    * the page displays 「保存成功」. The user only finds out the next time they switch back, by
    * which point there is no telling when it went.
    *
@@ -299,14 +294,13 @@ describe('loadConfig', () => {
   test('saving one vendor does not erase another', () => {
     writeConfig({
       provider: 'anthropic',
-      providers: { anthropic: { apiKey: 'ANT', model: 'claude-opus-5' }, gemini: { apiKey: 'GEM' } },
+      providers: { anthropic: { apiKey: 'ANT', model: 'claude-opus-5' }, deepseek: { apiKey: 'DS-OLD' } },
     });
     saveConfig({ ai: { provider: 'deepseek', providers: { deepseek: { apiKey: 'DS', model: '' } } } });
 
     const { ai } = loadConfig();
     assert.equal(ai.providers.anthropic.apiKey, 'ANT', 'Anthropic\'s set was erased by the act of saving DeepSeek');
     assert.equal(ai.providers.anthropic.model, 'claude-opus-5', 'the model has to survive along with it');
-    assert.equal(ai.providers.gemini.apiKey, 'GEM');
     assert.equal(ai.apiKey, 'DS', 'the current provider\'s key has to resolve');
   });
 });

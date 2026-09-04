@@ -19,7 +19,7 @@ Writing a guide used to require a Claude Code session: pull the Steam achievemen
 | Scale | **Written in shards, ceiling 500** | The real constraint is not that the list doesn't fit (the list is small), it's that **the prose doesn't** — 400 achievements is roughly 60,000 characters, past every vendor's single-response ceiling, and exceeding it doesn't error: it just looks like "every achievement in the second half is missing a checkbox" |
 | Output backend | **Notion when connected; `--local` to opt out** | The user's hand-written guides are all in Notion, so landing machine-written ones elsewhere splits one set of notes across two places. The converter only has to cover the block types **we generate**, not general markdown |
 | Landing gate | **Split by reversibility, not by backend**: new = written automatically once the machine gates pass; overwrite = requires human confirmation | Adding a backend needs no rule rewrite — a new backend naturally lands in the "irreversible" tier |
-| Spending | **Only a pre-run confirmation plus a token count afterwards** — no amounts, no caps | A cap needs an amount it cannot estimate honestly. There is no trustworthy price for DeepSeek or Gemini, and **how server-side search is billed has never been measured, start to finish**. **An untrustworthy cap is worse than no cap: it looks like protection while protecting nothing.** To bring it back, go measure search billing first |
+| Spending | **Only a pre-run confirmation plus a token count afterwards** — no amounts, no caps | A cap needs an amount it cannot estimate honestly. There is no trustworthy price for either provider, and **how server-side search is billed has never been measured, start to finish**. **An untrustworthy cap is worse than no cap: it looks like protection while protecting nothing.** To bring it back, go measure search billing first |
 | Checked state | **The model only ever writes `- [ ]`; we tick mechanically from the database afterwards** | Turns "checked state must equal real `achieved`" from something to be checked into something structurally impossible to violate |
 | Unlock state | **Not fed to the model** | A corollary of the previous row. It also fits SKILL.md 3.1: a guide is a record of *how the game was played*, not a list of what's left |
 | Failing the gate | At most 3 rewrite rounds; still failing ⇒ **keep it as a draft** and report which entries failed | Discarding burns the money and the time and leaves nothing; and "which entry failed" carries information |
@@ -49,7 +49,7 @@ lib/ai.js         Provider abstraction: request assembly, the tool-call loop, us
                   Every vendor differs in request structure, tool declaration format, response
                   body and error codes; this layer exists to keep those differences inside it
 lib/ai-anthropic.js  Anthropic's request format, block assembly, pause_turn continuation
-lib/ai-gemini.js     Gemini's request format, chunk assembly, grounding
+lib/ai-deepseek.js   DeepSeek's OpenAI-compatible request format, chunk assembly, no server-side search
 lib/guidegen.js   Orchestration: fetch achievement data → research + write → mechanical ticking →
                   hand to the linter → feed specific errors back and rewrite (max 3 rounds) → land
 lib/guidepatch.js Partial rewrite (`--only`). **A separate path, not a branch in generateGuide**
@@ -421,24 +421,9 @@ Two things deliberately not built into the UI:
 
 ### Hard admission requirement: server-side search
 
-One option with a free tier is far more useful than a second paid one — the goal is "let the people using this app use their own key", and a provider with no free allowance blocks both the user and our own verification. Gemini's Google Search grounding *is* server-side search, so the requirement was not relaxed.
+One option with a free tier is far more useful than a second paid one — the goal is "let the people using this app use their own key", and a provider with no free allowance blocks both the user and our own verification.
 
-### Make the uncertain parts runtime-answerable
-
-`lib/ai-gemini.js` was written without access to the official docs, and the response was not to bet on memory:
-
-- **The model name is configurable**, and `node tracker.js ai-check --models` asks the API for the list directly. A wrong guess needs no code change.
-- **Tool declarations are configurable** (`ai.geminiTools`). A renamed tool, or one the free tier won't allow, is also a config change.
-- **The thinking budget isn't sent at all unless configured** — sending a field that might not be accepted is more error-prone than not sending it.
-- **Whether search actually happened is read off the response, not the docs.** `groundingMetadata.webSearchQueries` holds the queries the model really issued; declaring the tool and getting none produces a dedicated warning line from `ai-check`. **That is far more reliable than reading a pricing page that may be out of date.**
-
-Error messages follow the same idea: a 404 points at `--models`, a tool-related 400 points at `ai.geminiTools`, and a 429 spells out that the free tier has both a per-minute and a per-day ceiling.
-
-**There are two kinds of 429, and the only difference in the message is the words `limit: 0`.** `limit: 0` does not mean "used up", it means this model is not in the free tier at all and will never recover at the daily reset — backing off as though it were a retryable 429 is waiting for nothing. The default model uses an **alias** (`gemini-flash-latest`) rather than a pinned version: version numbers inevitably expire while Google maintains the alias; the cost is that behaviour can change quietly, so pin a specific version when you need reproducibility.
-
-### A failure mode Anthropic doesn't have
-
-`finishReason: 'RECITATION'` — the model blocked for reproducing large amounts of copyrighted content. **Guide writing is exactly the high-risk case**: we explicitly require verbatim copying of official descriptions and ask it to read wikis. So it gets its own class (`stopReason: 'recitation'`) and an actionable message rather than being lumped in with ordinary refusals. That message says explicitly: **do not relax "copy the official description verbatim" in order to dodge this limit** — that rule is the foundation of the entire matching system.
+A third vendor (Gemini) was integrated for a time on that basis — its Google Search grounding counted as server-side search — and was later removed entirely; nothing in this document describes it any more. Its own uncertain-response handling (configurable tool declarations, reading `groundingMetadata.webSearchQueries` off the wire rather than a stale doc, the `limit: 0` free-tier distinction, a dedicated `RECITATION` stop reason) went with it. `stopReason: 'recitation'` stays in the shared vocabulary below as a slot for a future vendor that needs it, but no current provider produces it.
 
 ### The vocabulary is unified at the provider boundary
 
